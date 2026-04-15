@@ -63,6 +63,12 @@ jobs:
             -d "$(jq -n --arg id "$IDENTIFIER" \
               '{"query": "{ issue(id: \($id)) { id title comments(first: 250) { nodes { body } } } }"}')")
 
+          # Debug: show response structure (keys only, not values)
+          echo "Response keys: $(echo "$RESPONSE" | jq 'keys')"
+          echo "Issue keys: $(echo "$RESPONSE" | jq '.data.issue | keys')"
+          echo "Comment count: $(echo "$RESPONSE" | jq '(.data.issue.comments.nodes // []) | length')"
+          echo "Errors: $(echo "$RESPONSE" | jq '.errors')"
+
           echo "$RESPONSE" | jq -r '.data.issue.id' > /tmp/issue_uuid.txt
           echo "$RESPONSE" | jq -r '.data.issue.title' > /tmp/issue_title.txt
 
