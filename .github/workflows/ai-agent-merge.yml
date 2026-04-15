@@ -96,17 +96,15 @@ jobs:
           MERGE_COMMIT="${{ github.event.pull_request.merge_commit_sha }}"
           REPO="${{ github.repository }}"
 
+          BODY="$(printf '## Merged — %s\n\nPR: %s\nCommit: https://github.com/%s/commit/%s\n\nIssue moved to Done.' \
+            "$IDENTIFIER" "$PR_URL" "$REPO" "$MERGE_COMMIT")"
+
           curl -s -X POST https://api.linear.app/graphql \
             -H "Authorization: $LINEAR_API_KEY" \
             -H "Content-Type: application/json" \
             -d "$(jq -n \
               --arg issue_id "$ISSUE_ID" \
-              --arg body "## Merged — $IDENTIFIER
-
-PR: $PR_URL
-Commit: https://github.com/$REPO/commit/$MERGE_COMMIT
-
-Issue moved to Done." \
+              --arg body "$BODY" \
               '{
                 query: "mutation CommentCreate($input: CommentCreateInput!) { commentCreate(input: $input) { success } }",
                 variables: { input: { issueId: $issue_id, body: $body } }
