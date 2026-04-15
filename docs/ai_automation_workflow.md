@@ -1,5 +1,84 @@
 # AI Automation Workflow: Linear Issue → Code → Ticket Update
 
+## Setup Requirements
+
+Everything needed to recreate this workflow from scratch.
+
+### Accounts & Services
+
+| Service | Purpose | Notes |
+|---------|---------|-------|
+| **Linear** | Issue tracking, webhook source, status sink | Any plan with API access |
+| **GitHub** | Repo hosting, Actions runner, PR automation | Free tier is fine |
+| **OpenAI** | Powers the planning step (GPT-4o) and Codex implementation | Needs API access — Responses API quota required for Codex |
+
+### GitHub Actions Secrets
+
+Set these under **Settings → Secrets and variables → Actions → Repository secrets**:
+
+| Secret | Value | Used by |
+|--------|-------|---------|
+| `LINEAR_API_KEY` | Linear personal API key (Settings → API → Personal API keys) | Both AI Agent workflows |
+| `CODEX_API_KEY` | OpenAI API key (platform.openai.com → API keys) | Both AI Agent workflows |
+| `GITHUB_TOKEN` | Automatically provided by Actions — no setup needed | `ai-agent-implement.yml` (PR creation) |
+
+### Linear Webhook
+
+The automated trigger (`repository_dispatch: linear-ai-agent`) requires a middleware layer to bridge Linear webhooks to the GitHub API. You need a small HTTP endpoint (e.g. a Vercel function, Cloudflare Worker, or n8n workflow) that:
+
+1. Receives `POST` from Linear on the `issueLabel` event
+2. Checks the label is `ai-agent` (or whatever label you configure)
+3. Calls the GitHub API to fire a `repository_dispatch` event with `event_type: linear-ai-agent` and `client_payload: { identifier: "<LINEAR-ID>" }`
+
+The GitHub API call looks like:
+
+```sh
+curl -X POST https://api.github.com/repos/<owner>/<repo>/dispatches \
+  -H "Authorization: Bearer <GITHUB_PAT>" \
+  -H "Accept: application/vnd.github+json" \
+  -d '{"event_type":"linear-ai-agent","client_payload":{"identifier":"TY-7"}}'
+```
+
+The PAT used here needs `repo` scope (or `contents: write` for fine-grained tokens).
+
+For the plan-approval trigger (`linear-ai-agent-implement`), the same middleware must also watch for Linear comment events where the comment body contains "approved" and fire a second dispatch with `event_type: linear-ai-agent-implement`.
+
+### Local Developer Workflow (no middleware needed)
+
+Both workflows support `workflow_dispatch` for manual testing. You can also use the pickup script locally:
+
+```sh
+# Requires LINEAR_API_KEY in .env or exported in your shell
+./scripts/pickup.sh TY-7
+```
+
+This fetches the issue, creates the branch, and writes a `TASK.md` prompt file. Then point any AI coding tool (Claude Code, Cursor, etc.) at it:
+
+```
+Read TASK.md and AGENTS.md, then implement the issue.
+```
+
+### Tool Versions
+
+Pinned in the workflow files — change these if your project requires different versions:
+
+| Tool | Version |
+|------|---------|
+| Node.js | 20 |
+| pnpm | 10.33.0 |
+| `@openai/codex` | latest (installed at runtime via `npm install -g`) |
+
+### GitHub Branch Protection (recommended)
+
+Once the workflows are wired up, add branch protection on `main`:
+
+- Require status checks: `Typecheck, Lint, Test` (from `ci.yml`)
+- Require at least 1 human approval
+- Dismiss stale reviews on new pushes
+- Block force-pushes
+
+---
+
 ## Overview
 
 A full-cycle automation using **Linear** (issue tracking), **Codex** (primary code agent), and **GitHub Actions** (orchestration), bridged by a thin webhook layer.
