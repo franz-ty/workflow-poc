@@ -1,0 +1,162 @@
+name: AI Agent
+
+on:
+  # Manual trigger for testing — provide the Linear issue identifiers directly
+  workflow_dispatch:
+    inputs:
+      issue_id:
+        description: Linear issue internal UUID
+        required: true
+      identifier:
+        description: Linear issue identifier (e.g. TY-7)
+        required: true
+
+  # Automated trigger — fired by Linear webhook via middleware
+  # Payload must include: { issue_id, identifier }
+  repository_dispatch:
+    types: [linear-ai-agent]
+
+jobs:
+  plan:
+    name: Analyze and plan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve inputs
+        id: inputs
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            echo "issue_id=${{ github.event.client_payload.issue_id }}" >> $GITHUB_OUTPUT
+            echo "identifier=${{ github.event.client_payload.identifier }}" >> $GITHUB_OUTPUT
+          else
+            echo "issue_id=${{ inputs.issue_id }}" >> $GITHUB_OUTPUT
+            echo "identifier=${{ inputs.identifier }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Fetch issue from Linear
+        id: issue
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: |
+          ISSUE_ID="${{ steps.inputs.outputs.issue_id }}"
+
+          RESPONSE=$(curl -s -X POST https://api.linear.app/graphql \
+            -H "Authorization: $LINEAR_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg id "$ISSUE_ID" \
+              '{"query": "{ issue(id: \($id)) { id identifier title description } }"}')")
+
+          echo "$RESPONSE" | jq -r '.data.issue.title' > /tmp/issue_title.txt
+          echo "$RESPONSE" | jq -r '.data.issue.description' > /tmp/issue_description.md
+
+          TITLE=$(cat /tmp/issue_title.txt)
+          echo "title=$TITLE" >> $GITHUB_OUTPUT
+
+      - name: Collect codebase context
+        run: |
+          {
+            echo "# Repository structure"
+            echo '```'
+            find . \
+              -not -path '*/node_modules/*' \
+              -not -path '*/.next/*' \
+              -not -path '*/.git/*' \
+              -not -path '*/.turbo/*' \
+              -not -name 'pnpm-lock.yaml' \
+              \( -name '*.ts' -o -name '*.tsx' -o -name '*.json' -o -name '*.yaml' -o -name '*.yml' -o -name '*.md' \) \
+              | sort
+            echo '```'
+            echo ""
+            echo "# Architecture standards (AGENTS.md)"
+            cat AGENTS.md
+          } > /tmp/context.md
+
+      - name: Generate plan
+        env:
+          OPENAI_API_KEY: ${{ secrets.CODEX_API_KEY }}
+        run: |
+          IDENTIFIER="${{ steps.inputs.outputs.identifier }}"
+          TITLE=$(cat /tmp/issue_title.txt)
+          DESCRIPTION=$(cat /tmp/issue_description.md)
+          CONTEXT=$(cat /tmp/context.md)
+
+          PROMPT="You are a senior engineer planning the implementation of a Linear issue in this codebase.
+
+          ## Issue: $IDENTIFIER — $TITLE
+
+          $DESCRIPTION
+
+          ## Codebase context
+
+          $CONTEXT
+
+          ## Instructions
+
+          Produce a concise, structured implementation plan in markdown. Include:
+
+          ### Affected files
+          List each file to be created or modified with its full path.
+
+          ### Approach
+          Numbered step-by-step plan. Reference actual file paths and function names where relevant.
+
+          ### Test strategy
+          How the implementation will be verified — commands to run, what passing looks like.
+
+          Do not write any code. Do not make assumptions beyond what is in the issue and codebase context."
+
+          curl -s https://api.openai.com/v1/chat/completions \
+            -H "Authorization: Bearer $OPENAI_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg prompt "$PROMPT" '{
+              model: "gpt-4o",
+              messages: [{"role": "user", "content": $prompt}],
+              temperature: 0.2
+            }')" \
+            | jq -r '.choices[0].message.content' > /tmp/plan.md
+
+      - name: Post plan to Linear
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: |
+          ISSUE_ID="${{ steps.inputs.outputs.issue_id }}"
+          IDENTIFIER="${{ steps.inputs.outputs.identifier }}"
+          PLAN=$(cat /tmp/plan.md)
+
+          BODY="## Plan — $IDENTIFIER
+
+          $PLAN
+
+          ---
+
+          Reply **approved** to proceed with implementation."
+
+          curl -s -X POST https://api.linear.app/graphql \
+            -H "Authorization: $LINEAR_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg issue_id "$ISSUE_ID" \
+              --arg body "$BODY" \
+              '{
+                query: "mutation CommentCreate($input: CommentCreateInput!) { commentCreate(input: $input) { success } }",
+                variables: { input: { issueId: $issue_id, body: $body } }
+              }')"
+
+          echo "Plan posted to Linear issue $IDENTIFIER"
