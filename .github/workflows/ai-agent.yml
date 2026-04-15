@@ -1,18 +1,15 @@
 name: AI Agent
 
 on:
-  # Manual trigger for testing — provide the Linear issue identifiers directly
+  # Manual trigger for testing — provide just the Linear issue identifier
   workflow_dispatch:
     inputs:
-      issue_id:
-        description: Linear issue internal UUID
-        required: true
       identifier:
         description: Linear issue identifier (e.g. TY-7)
         required: true
 
   # Automated trigger — fired by Linear webhook via middleware
-  # Payload must include: { issue_id, identifier }
+  # Payload must include: { identifier }
   repository_dispatch:
     types: [linear-ai-agent]
 
@@ -43,10 +40,8 @@ jobs:
         id: inputs
         run: |
           if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
-            echo "issue_id=${{ github.event.client_payload.issue_id }}" >> $GITHUB_OUTPUT
             echo "identifier=${{ github.event.client_payload.identifier }}" >> $GITHUB_OUTPUT
           else
-            echo "issue_id=${{ inputs.issue_id }}" >> $GITHUB_OUTPUT
             echo "identifier=${{ inputs.identifier }}" >> $GITHUB_OUTPUT
           fi
 
@@ -55,19 +50,20 @@ jobs:
         env:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
         run: |
-          ISSUE_ID="${{ steps.inputs.outputs.issue_id }}"
+          IDENTIFIER="${{ steps.inputs.outputs.identifier }}"
 
+          # Linear accepts the human-readable identifier (e.g. TY-7) directly
           RESPONSE=$(curl -s -X POST https://api.linear.app/graphql \
             -H "Authorization: $LINEAR_API_KEY" \
             -H "Content-Type: application/json" \
-            -d "$(jq -n --arg id "$ISSUE_ID" \
+            -d "$(jq -n --arg id "$IDENTIFIER" \
               '{"query": "{ issue(id: \($id)) { id identifier title description } }"}')")
 
+          echo "$RESPONSE" | jq -r '.data.issue.id' > /tmp/issue_uuid.txt
           echo "$RESPONSE" | jq -r '.data.issue.title' > /tmp/issue_title.txt
           echo "$RESPONSE" | jq -r '.data.issue.description' > /tmp/issue_description.md
 
-          TITLE=$(cat /tmp/issue_title.txt)
-          echo "title=$TITLE" >> $GITHUB_OUTPUT
+          echo "title=$(cat /tmp/issue_title.txt)" >> $GITHUB_OUTPUT
 
       - name: Collect codebase context
         run: |
@@ -136,7 +132,7 @@ jobs:
         env:
           LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
         run: |
-          ISSUE_ID="${{ steps.inputs.outputs.issue_id }}"
+          ISSUE_ID=$(cat /tmp/issue_uuid.txt)
           IDENTIFIER="${{ steps.inputs.outputs.identifier }}"
           PLAN=$(cat /tmp/plan.md)
 
