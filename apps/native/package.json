@@ -1,0 +1,11 @@
+{
+  "name": "@bsava/native",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "echo \"Native app — not yet configured\"",
+    "build": "echo \"Native app — not yet configured\"",
+    "lint": "echo \"Native app — not yet configured\"",
+    "typecheck": "echo \"Native app — not yet configured\""
+  }
+}
