@@ -108,7 +108,14 @@ jobs:
         env:
           OPENAI_API_KEY: ${{ secrets.CODEX_API_KEY }}
         run: |
-          codex exec --dangerously-bypass-approvals-and-sandbox "$(cat /tmp/plan.md)"
+          # Write Codex config — CLI reads ~/.codex/config.toml first
+          mkdir -p ~/.codex
+          printf '[providers.openai]\napi_key = "%s"\n\n[model]\nmodel = "gpt-4o"\n' \
+            "$OPENAI_API_KEY" > ~/.codex/config.toml
+
+          codex exec --dangerously-bypass-approvals-and-sandbox \
+            -c model="gpt-4o" \
+            "$(cat /tmp/plan.md)"
 
       - name: Run quality checks with retry
         id: checks
