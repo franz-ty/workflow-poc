@@ -111,18 +111,18 @@ jobs:
           # The built-in "openai" provider requires ChatGPT OAuth login (requires_openai_auth=true)
           # and ignores OPENAI_API_KEY. Define a custom provider that reads from env_key instead.
           mkdir -p ~/.codex
-          cat > ~/.codex/config.toml << 'TOML'
-model = "gpt-4o"
-model_provider = "openai-ci"
-
-[model_providers.openai-ci]
-name = "OpenAI CI"
-base_url = "https://api.openai.com/v1"
-env_key = "OPENAI_API_KEY"
-wire_api = "responses"
-requires_openai_auth = false
-supports_websockets = true
-TOML
+          printf '%s\n' \
+            'model = "gpt-4o"' \
+            'model_provider = "openai-ci"' \
+            '' \
+            '[model_providers.openai-ci]' \
+            'name = "OpenAI CI"' \
+            'base_url = "https://api.openai.com/v1"' \
+            'env_key = "OPENAI_API_KEY"' \
+            'wire_api = "responses"' \
+            'requires_openai_auth = false' \
+            'supports_websockets = true' \
+            > ~/.codex/config.toml
 
           codex exec --dangerously-bypass-approvals-and-sandbox \
             "$(cat /tmp/plan.md)"
