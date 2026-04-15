@@ -1,0 +1,115 @@
+name: AI Agent — Merge
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  update-linear:
+    name: Mark Linear issue as Done
+    runs-on: ubuntu-latest
+    # Only run when the PR was actually merged (not just closed)
+    if: github.event.pull_request.merged == true
+
+    steps:
+      - name: Extract Linear identifier from PR title
+        id: linear
+        run: |
+          TITLE="${{ github.event.pull_request.title }}"
+          # Match [TY-7] or [ABC-123] at the start of the PR title
+          IDENTIFIER=$(echo "$TITLE" | grep -oE '^\[([A-Z]+-[0-9]+)\]' | tr -d '[]')
+
+          if [ -z "$IDENTIFIER" ]; then
+            echo "No Linear identifier found in PR title: $TITLE — skipping"
+            echo "skip=true" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          echo "identifier=$IDENTIFIER" >> $GITHUB_OUTPUT
+          echo "skip=false" >> $GITHUB_OUTPUT
+          echo "Found: $IDENTIFIER"
+
+      - name: Fetch issue and resolve Done state
+        id: issue
+        if: steps.linear.outputs.skip != 'true'
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: |
+          IDENTIFIER="${{ steps.linear.outputs.identifier }}"
+
+          # Fetch issue UUID and team workflow states in one query
+          RESPONSE=$(curl -s -X POST https://api.linear.app/graphql \
+            -H "Authorization: $LINEAR_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg id "$IDENTIFIER" \
+              '{"query": "{ issue(id: \"\($id)\") { id team { states { nodes { id name type } } } } }"}')")
+
+          ISSUE_ID=$(echo "$RESPONSE" | jq -r '.data.issue.id')
+
+          # Find the first state with type "completed" (Linear's Done equivalent)
+          DONE_STATE_ID=$(echo "$RESPONSE" | jq -r \
+            '[.data.issue.team.states.nodes[] | select(.type == "completed")] | first | .id')
+
+          if [ -z "$DONE_STATE_ID" ] || [ "$DONE_STATE_ID" = "null" ]; then
+            echo "::error::No completed state found for team of $IDENTIFIER"
+            exit 1
+          fi
+
+          echo "issue_id=$ISSUE_ID" >> $GITHUB_OUTPUT
+          echo "done_state_id=$DONE_STATE_ID" >> $GITHUB_OUTPUT
+          echo "Resolved: issue=$ISSUE_ID done_state=$DONE_STATE_ID"
+
+      - name: Update issue state to Done
+        if: steps.linear.outputs.skip != 'true'
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: |
+          ISSUE_ID="${{ steps.issue.outputs.issue_id }}"
+          DONE_STATE_ID="${{ steps.issue.outputs.done_state_id }}"
+
+          curl -s -X POST https://api.linear.app/graphql \
+            -H "Authorization: $LINEAR_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg id "$ISSUE_ID" \
+              --arg state_id "$DONE_STATE_ID" \
+              '{
+                query: "mutation IssueUpdate($id: String!, $input: IssueUpdateInput!) { issueUpdate(id: $id, input: $input) { success } }",
+                variables: { id: $id, input: { stateId: $state_id } }
+              }')"
+
+          echo "${{ steps.linear.outputs.identifier }} marked as Done"
+
+      - name: Post merge notification to Linear
+        if: steps.linear.outputs.skip != 'true'
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: |
+          ISSUE_ID="${{ steps.issue.outputs.issue_id }}"
+          IDENTIFIER="${{ steps.linear.outputs.identifier }}"
+          PR_URL="${{ github.event.pull_request.html_url }}"
+          MERGE_COMMIT="${{ github.event.pull_request.merge_commit_sha }}"
+          REPO="${{ github.repository }}"
+
+          curl -s -X POST https://api.linear.app/graphql \
+            -H "Authorization: $LINEAR_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg issue_id "$ISSUE_ID" \
+              --arg body "## Merged — $IDENTIFIER
+
+PR: $PR_URL
+Commit: https://github.com/$REPO/commit/$MERGE_COMMIT
+
+Issue moved to Done." \
+              '{
+                query: "mutation CommentCreate($input: CommentCreateInput!) { commentCreate(input: $input) { success } }",
+                variables: { input: { issueId: $issue_id, body: $body } }
+              }')"
+
+          echo "Linear notified of merge for $IDENTIFIER"
