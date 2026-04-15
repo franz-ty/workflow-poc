@@ -112,7 +112,7 @@ jobs:
           # and ignores OPENAI_API_KEY. Define a custom provider that reads from env_key instead.
           mkdir -p ~/.codex
           printf '%s\n' \
-            'model = "gpt-4o"' \
+            'model = "gpt-4o-mini"' \
             'model_provider = "openai-ci"' \
             '' \
             '[model_providers.openai-ci]' \
