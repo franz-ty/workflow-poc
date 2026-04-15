@@ -36,19 +36,17 @@ fi
 # Create branch
 SLUG=$(echo "$TITLE" \
   | tr '[:upper:]' '[:lower:]' \
-  | sed 's/[^a-z0-9]/-/g' \
-  | sed 's/-\+/-/g' \
+  | tr -cs 'a-z0-9' '-' \
   | sed 's/^-//' \
   | sed 's/-$//' \
   | cut -c1-50)
-BRANCH="feat/${IDENTIFIER,,}-${SLUG}"
+IDENTIFIER_LOWER=$(echo "$IDENTIFIER" | tr '[:upper:]' '[:lower:]')
+BRANCH="feat/${IDENTIFIER_LOWER}-${SLUG}"
 
 if git show-ref --quiet "refs/heads/$BRANCH"; then
-  git checkout "$BRANCH"
-  echo "Switched to existing branch: $BRANCH"
+  git checkout -q "$BRANCH"
 else
-  git checkout -b "$BRANCH"
-  echo "Created branch: $BRANCH"
+  git checkout -q -b "$BRANCH"
 fi
 
 # Write task context file
