@@ -21,6 +21,9 @@ dist
 .DS_Store
 *.pem
 
+# local task context — written by scripts/pickup.sh, not committed
+TASK.md
+
 # debug
 npm-debug.log*
 yarn-debug.log*
