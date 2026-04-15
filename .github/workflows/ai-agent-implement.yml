@@ -1,0 +1,195 @@
+name: AI Agent — Implement
+
+on:
+  # Manual trigger — approval is implied by triggering this workflow
+  workflow_dispatch:
+    inputs:
+      identifier:
+        description: Linear issue identifier (e.g. TY-7)
+        required: true
+
+  # Automated trigger — fired by middleware after human approves the plan comment
+  repository_dispatch:
+    types: [linear-ai-agent-implement]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  implement:
+    name: Implement approved plan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve inputs
+        id: inputs
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            echo "identifier=${{ github.event.client_payload.identifier }}" >> $GITHUB_OUTPUT
+          else
+            echo "identifier=${{ inputs.identifier }}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Fetch issue and plan from Linear
+        id: issue
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: |
+          IDENTIFIER="${{ steps.inputs.outputs.identifier }}"
+
+          RESPONSE=$(curl -s -X POST https://api.linear.app/graphql \
+            -H "Authorization: $LINEAR_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n --arg id "$IDENTIFIER" \
+              '{"query": "{ issue(id: \($id)) { id title comments { nodes { body } } } }"}')")
+
+          echo "$RESPONSE" | jq -r '.data.issue.id' > /tmp/issue_uuid.txt
+          echo "$RESPONSE" | jq -r '.data.issue.title' > /tmp/issue_title.txt
+
+          # Find the latest plan comment (posted by Phase 1, starts with "## Plan —")
+          echo "$RESPONSE" | jq -r \
+            '[.data.issue.comments.nodes[] | select(.body | startswith("## Plan —"))] | last | .body' \
+            > /tmp/plan.md
+
+          if [ "$(cat /tmp/plan.md)" = "null" ] || [ ! -s /tmp/plan.md ]; then
+            echo "::error::No plan comment found on $IDENTIFIER — run the plan workflow first"
+            exit 1
+          fi
+
+          echo "title=$(cat /tmp/issue_title.txt)" >> $GITHUB_OUTPUT
+          echo "Plan fetched for $IDENTIFIER"
+
+      - name: Create feature branch
+        id: branch
+        run: |
+          IDENTIFIER="${{ steps.inputs.outputs.identifier }}"
+          TITLE=$(cat /tmp/issue_title.txt)
+
+          SLUG=$(echo "$TITLE" \
+            | tr '[:upper:]' '[:lower:]' \
+            | sed 's/[^a-z0-9]/-/g' \
+            | sed 's/-\+/-/g' \
+            | sed 's/^-//' \
+            | sed 's/-$//' \
+            | cut -c1-50)
+          BRANCH="feat/${IDENTIFIER,,}-${SLUG}"
+
+          git config user.email "ai-agent@bsava.com"
+          git config user.name "AI Agent"
+          git checkout -b "$BRANCH"
+
+          echo "branch=$BRANCH" >> $GITHUB_OUTPUT
+          echo "Created branch: $BRANCH"
+
+      - name: Install Codex CLI
+        run: npm install -g @openai/codex
+
+      - name: Run Codex
+        env:
+          OPENAI_API_KEY: ${{ secrets.CODEX_API_KEY }}
+        run: |
+          codex --approval-mode full-auto "$(cat /tmp/plan.md)"
+
+      - name: Run quality checks with retry
+        id: checks
+        run: |
+          echo "passed=false" >> $GITHUB_OUTPUT
+          for attempt in 1 2 3; do
+            echo "::group::Quality check — attempt $attempt of 3"
+            if pnpm turbo typecheck lint test; then
+              echo "passed=true" >> $GITHUB_OUTPUT
+              echo "::endgroup::"
+              exit 0
+            fi
+            echo "::endgroup::"
+            echo "Attempt $attempt failed"
+          done
+          exit 1
+
+      - name: Post failure to Linear
+        if: failure() && steps.checks.outcome == 'failure'
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: |
+          ISSUE_ID=$(cat /tmp/issue_uuid.txt)
+          IDENTIFIER="${{ steps.inputs.outputs.identifier }}"
+
+          curl -s -X POST https://api.linear.app/graphql \
+            -H "Authorization: $LINEAR_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg issue_id "$ISSUE_ID" \
+              --arg body "## Implementation failed — $IDENTIFIER
+
+          Codex-generated code did not pass quality checks after 3 attempts (\`pnpm turbo typecheck lint test\`).
+
+          Review the [workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}) for the full error log." \
+              '{
+                query: "mutation CommentCreate($input: CommentCreateInput!) { commentCreate(input: $input) { success } }",
+                variables: { input: { issueId: $issue_id, body: $body } }
+              }')"
+
+      - name: Commit and push
+        run: |
+          IDENTIFIER="${{ steps.inputs.outputs.identifier }}"
+          BRANCH="${{ steps.branch.outputs.branch }}"
+
+          git add -A
+          git diff --cached --quiet && echo "No changes to commit" && exit 0
+          git commit -m "[$IDENTIFIER] Implement via Codex"
+          git push origin "$BRANCH"
+
+      - name: Open PR and notify Linear
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+        run: |
+          IDENTIFIER="${{ steps.inputs.outputs.identifier }}"
+          TITLE="${{ steps.issue.outputs.title }}"
+          BRANCH="${{ steps.branch.outputs.branch }}"
+          ISSUE_ID=$(cat /tmp/issue_uuid.txt)
+
+          PR_URL=$(gh pr create \
+            --title "[$IDENTIFIER] $TITLE" \
+            --body "Generated by AI Agent from Linear issue $IDENTIFIER.
+
+          All quality checks passed (\`pnpm turbo typecheck lint test\`)." \
+            --base main \
+            --head "$BRANCH")
+
+          curl -s -X POST https://api.linear.app/graphql \
+            -H "Authorization: $LINEAR_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d "$(jq -n \
+              --arg issue_id "$ISSUE_ID" \
+              --arg body "## PR ready for review — $IDENTIFIER
+
+          $PR_URL
+
+          All quality checks passed. Ready for human review." \
+              '{
+                query: "mutation CommentCreate($input: CommentCreateInput!) { commentCreate(input: $input) { success } }",
+                variables: { input: { issueId: $issue_id, body: $body } }
+              }')"
+
+          echo "PR created: $PR_URL"
