@@ -104,14 +104,14 @@ jobs:
       - name: Install Codex CLI
         run: npm install -g @openai/codex
 
-      - name: Check Codex CLI flags
-        run: codex --help 2>&1 || true
+      - name: Check Codex exec flags
+        run: codex exec --help 2>&1 || true
 
       - name: Run Codex
         env:
           OPENAI_API_KEY: ${{ secrets.CODEX_API_KEY }}
         run: |
-          codex -a full-auto "$(cat /tmp/plan.md)"
+          codex exec --ask-for-approval never "$(cat /tmp/plan.md)"
 
       - name: Run quality checks with retry
         id: checks
