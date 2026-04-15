@@ -104,15 +104,31 @@ jobs:
       - name: Install Codex CLI
         run: npm install -g @openai/codex
 
+      - name: Verify API key
+        env:
+          OPENAI_API_KEY: ${{ secrets.CODEX_API_KEY }}
+        run: |
+          echo "Key length: ${#OPENAI_API_KEY} chars"
+
+          # Test Chat Completions endpoint
+          CC_STATUS=$(curl -s -o /tmp/cc_test.json -w "%{http_code}" \
+            https://api.openai.com/v1/models \
+            -H "Authorization: Bearer $OPENAI_API_KEY")
+          echo "Chat Completions API: $CC_STATUS"
+
+          # Test Responses endpoint (what Codex CLI uses)
+          RESP_STATUS=$(curl -s -o /tmp/resp_test.json -w "%{http_code}" \
+            -X POST https://api.openai.com/v1/responses \
+            -H "Authorization: Bearer $OPENAI_API_KEY" \
+            -H "Content-Type: application/json" \
+            -d '{"model":"gpt-4o","input":"hi"}')
+          echo "Responses API: $RESP_STATUS"
+          cat /tmp/resp_test.json | jq -r '.error.message // "ok"'
+
       - name: Run Codex
         env:
           OPENAI_API_KEY: ${{ secrets.CODEX_API_KEY }}
         run: |
-          # Write Codex config — CLI reads ~/.codex/config.toml first
-          mkdir -p ~/.codex
-          printf '[providers.openai]\napi_key = "%s"\n\n[model]\nmodel = "gpt-4o"\n' \
-            "$OPENAI_API_KEY" > ~/.codex/config.toml
-
           codex exec --dangerously-bypass-approvals-and-sandbox \
             -c model="gpt-4o" \
             "$(cat /tmp/plan.md)"
