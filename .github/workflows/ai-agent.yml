@@ -57,7 +57,7 @@ jobs:
             -H "Authorization: $LINEAR_API_KEY" \
             -H "Content-Type: application/json" \
             -d "$(jq -n --arg id "$IDENTIFIER" \
-              '{"query": "{ issue(id: \($id)) { id identifier title description } }"}')")
+              '{"query": "{ issue(id: \"\($id)\") { id identifier title description } }"}')")
 
           echo "$RESPONSE" | jq -r '.data.issue.id' > /tmp/issue_uuid.txt
           echo "$RESPONSE" | jq -r '.data.issue.title' > /tmp/issue_title.txt
