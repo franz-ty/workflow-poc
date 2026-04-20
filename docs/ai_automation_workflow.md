@@ -6,21 +6,21 @@ Everything needed to recreate this workflow from scratch.
 
 ### Accounts & Services
 
-| Service | Purpose | Notes |
-|---------|---------|-------|
-| **Linear** | Issue tracking, webhook source, status sink | Any plan with API access |
-| **GitHub** | Repo hosting, Actions runner, PR automation | Free tier is fine |
+| Service    | Purpose                                                    | Notes                                                     |
+| ---------- | ---------------------------------------------------------- | --------------------------------------------------------- |
+| **Linear** | Issue tracking, webhook source, status sink                | Any plan with API access                                  |
+| **GitHub** | Repo hosting, Actions runner, PR automation                | Free tier is fine                                         |
 | **OpenAI** | Powers the planning step (GPT-4o) and Codex implementation | Needs API access — Responses API quota required for Codex |
 
 ### GitHub Actions Secrets
 
 Set these under **Settings → Secrets and variables → Actions → Repository secrets**:
 
-| Secret | Value | Used by |
-|--------|-------|---------|
-| `LINEAR_API_KEY` | Linear personal API key (Settings → API → Personal API keys) | Both AI Agent workflows |
-| `CODEX_API_KEY` | OpenAI API key (platform.openai.com → API keys) | Both AI Agent workflows |
-| `GITHUB_TOKEN` | Automatically provided by Actions — no setup needed | `ai-agent-implement.yml` (PR creation) |
+| Secret           | Value                                                        | Used by                                |
+| ---------------- | ------------------------------------------------------------ | -------------------------------------- |
+| `LINEAR_API_KEY` | Linear personal API key (Settings → API → Personal API keys) | Both AI Agent workflows                |
+| `CODEX_API_KEY`  | OpenAI API key (platform.openai.com → API keys)              | Both AI Agent workflows                |
+| `GITHUB_TOKEN`   | Automatically provided by Actions — no setup needed          | `ai-agent-implement.yml` (PR creation) |
 
 ### Linear Webhook
 
@@ -62,10 +62,10 @@ Read TASK.md and AGENTS.md, then implement the issue.
 
 Pinned in the workflow files — change these if your project requires different versions:
 
-| Tool | Version |
-|------|---------|
-| Node.js | 20 |
-| pnpm | 10.33.0 |
+| Tool            | Version                                            |
+| --------------- | -------------------------------------------------- |
+| Node.js         | 20                                                 |
+| pnpm            | 10.33.0                                            |
 | `@openai/codex` | latest (installed at runtime via `npm install -g`) |
 
 ### GitHub Branch Protection (recommended)
@@ -124,11 +124,11 @@ Linear ticket auto-updated → Done
 
 ### Phase 1 — Issue Intake (Linear)
 
-| Step | Who | What |
-|------|-----|------|
-| Create issue | **Human** | Write title, description, acceptance criteria, and attach the `ai-ready` label |
-| Triage label | **Human** | Add a label like `ai-agent` to signal the issue is eligible for automation |
-| Webhook fires | Automation | Linear POSTs to your orchestrator endpoint on `issueLabel` event |
+| Step          | Who        | What                                                                           |
+| ------------- | ---------- | ------------------------------------------------------------------------------ |
+| Create issue  | **Human**  | Write title, description, acceptance criteria, and attach the `ai-ready` label |
+| Triage label  | **Human**  | Add a label like `ai-agent` to signal the issue is eligible for automation     |
+| Webhook fires | Automation | Linear POSTs to your orchestrator endpoint on `issueLabel` event               |
 
 **Human checkpoint:** Issue authorship. The quality of the acceptance criteria directly determines the quality of the output. Vague issues produce vague code.
 
@@ -136,14 +136,15 @@ Linear ticket auto-updated → Done
 
 ### Phase 2 — Analysis & Planning (Codex)
 
-| Step | Who | What |
-|------|-----|------|
-| Fetch issue detail | Automation | Linear API pulls title, description, linked issues |
-| Codebase analysis | **Codex** | Reads relevant files and maps the issue to affected areas |
-| Plan generation | **Codex** | Produces a structured plan: affected files, approach, test strategy |
-| Post plan | Automation | Plan is posted as a comment on the Linear issue |
+| Step               | Who        | What                                                                |
+| ------------------ | ---------- | ------------------------------------------------------------------- |
+| Fetch issue detail | Automation | Linear API pulls title, description, linked issues                  |
+| Codebase analysis  | **Codex**  | Reads relevant files and maps the issue to affected areas           |
+| Plan generation    | **Codex**  | Produces a structured plan: affected files, approach, test strategy |
+| Post plan          | Automation | Plan is posted as a comment on the Linear issue                     |
 
 **Human checkpoint:** Reviewer reads the plan comment in Linear and either:
+
 - Replies "approved" (triggers Phase 3), or
 - Leaves feedback for revision (loops Codex back)
 
@@ -151,14 +152,18 @@ This gate prevents runaway code generation on misunderstood requirements.
 
 ---
 
-### Phase 3 — Implementation (Codex)
+### Phase 3 — Implementation
 
-| Step | Who | What |
-|------|-----|------|
-| Branch creation | Automation | `git checkout -b feat/linear-<issue-id>-<slug>` |
-| Code generation | **Codex** | Implements per the approved plan, runs autonomously in the background |
-| Self-check | **Codex** | Runs `tsc`, `eslint`, `pnpm test` and fixes errors autonomously (up to 3 retry loops) |
-| Commit | Automation | Commits with `[LINEAR-XXX]` in message for traceability |
+| Step                     | Who          | What                                                                                                                                                                                                                                         |
+| ------------------------ | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Branch creation          | Automation   | `git checkout -b feat/linear-<issue-id>-<slug>`                                                                                                                                                                                              |
+| Code generation          | **Codex**    | Implements per the approved plan, runs autonomously in the background                                                                                                                                                                        |
+| Self-check               | **Codex**    | Runs `tsc`, `eslint`, `pnpm test` and fixes errors autonomously (up to 3 retry loops)                                                                                                                                                        |
+| Architectural boundaries | ESLint       | `no-restricted-imports` rules in `eslint.config.mjs` enforce layer boundaries deterministically during `pnpm lint` — no LLM pass needed                                                                                                      |
+| Consolidated AI review   | **AI agent** | Single adversarial pass (`pnpm ai:verify`) covering React/Next.js, test quality, branch coverage, dead code/scope, business-logic placement, and correctness/safety. Fixes critical/warning issues; writes review summary for the PR comment |
+| Commit                   | Automation   | Commits with `[LINEAR-XXX]` in message for traceability                                                                                                                                                                                      |
+
+The verification pass is driven by `scripts/runAIVerificationPasses.sh` and is provider-agnostic — set `AI_CLI=codex` (default) or `AI_CLI=claude`. Defaults to a scoped sandbox (`codex --full-auto` / `claude --permission-mode acceptEdits` with a tool allowlist); set `AI_BYPASS=1` for full-bypass mode in ephemeral CI runners. Full prompt and configuration details are in `docs/extreme_quality_enforcement.md`.
 
 **Human checkpoint:** If CI fails after 3 auto-fix attempts, the loop halts and pings the engineer in Slack/Linear with the error output. The engineer takes over in their own editor.
 
@@ -166,13 +171,13 @@ This gate prevents runaway code generation on misunderstood requirements.
 
 ### Phase 4 — PR Creation & Review
 
-| Step | Who | What |
-|------|-----|------|
-| PR opened | Automation | `gh pr create` with Linear issue ID in title and body |
-| AI review | **Codex** | Posts a review comment summarizing changes, risks, and test coverage gaps |
-| Security scan | Automation | CI runs SAST (e.g., CodeQL or Semgrep) |
-| Human review | **Human** | Engineer reads AI review, inspects diff, adds comments |
-| Approval + merge | **Human** | Required — no auto-merge without a human approval |
+| Step             | Who        | What                                                                      |
+| ---------------- | ---------- | ------------------------------------------------------------------------- |
+| PR opened        | Automation | `gh pr create` with Linear issue ID in title and body                     |
+| AI review        | **Codex**  | Posts a review comment summarizing changes, risks, and test coverage gaps |
+| Security scan    | Automation | CI runs SAST (e.g., CodeQL or Semgrep)                                    |
+| Human review     | **Human**  | Engineer reads AI review, inspects diff, adds comments                    |
+| Approval + merge | **Human**  | Required — no auto-merge without a human approval                         |
 
 **Human checkpoint:** PR approval is always human. The AI review is advisory, not a substitute.
 
@@ -180,12 +185,12 @@ This gate prevents runaway code generation on misunderstood requirements.
 
 ### Phase 5 — Post-Merge Ticket Update
 
-| Step | Who | What |
-|------|-----|------|
-| Merge detected | Automation | GitHub Action on `push` to `main` |
-| Linear update | Automation | Linear API moves issue to **Done**, adds merge commit link as comment |
-| Deploy trigger | Automation | Kicks off deploy pipeline (if applicable) |
-| Notify | Automation | Posts summary to Slack: issue title, PR link, deploy status |
+| Step           | Who        | What                                                                  |
+| -------------- | ---------- | --------------------------------------------------------------------- |
+| Merge detected | Automation | GitHub Action on `push` to `main`                                     |
+| Linear update  | Automation | Linear API moves issue to **Done**, adds merge commit link as comment |
+| Deploy trigger | Automation | Kicks off deploy pipeline (if applicable)                             |
+| Notify         | Automation | Posts summary to Slack: issue title, PR link, deploy status           |
 
 No human action required here — this is fully automated.
 
@@ -207,6 +212,7 @@ packages/
 ```
 
 **Impact on the workflow:**
+
 - When Codex receives an issue, it must first identify which app(s) and package(s) are affected before writing any code
 - Branch names should be scoped where relevant: `feat/linear-<id>-web-<slug>` or `feat/linear-<id>-pkg-<slug>`
 - CI runs `turbo` so all affected packages and apps are linted, type-checked, and tested in one pass — changes to `packages/ui` automatically trigger tests in both `apps/web` and `apps/native`
@@ -216,22 +222,22 @@ packages/
 
 ## Tool Role Summary
 
-| Tool | Role |
-|------|------|
-| **Linear** | Source of truth for requirements; webhook trigger; status sink |
-| **Codex** | Primary AI agent — planning, code generation, self-review, agentic fix loops |
-| **GitHub Actions** | Orchestration glue, CI, Linear API calls, PR automation |
+| Tool               | Role                                                                         |
+| ------------------ | ---------------------------------------------------------------------------- |
+| **Linear**         | Source of truth for requirements; webhook trigger; status sink               |
+| **Codex**          | Primary AI agent — planning, code generation, self-review, agentic fix loops |
+| **GitHub Actions** | Orchestration glue, CI, Linear API calls, PR automation                      |
 
 ---
 
 ## Human Intervention Points (Summary)
 
-| # | Where | Why human is needed |
-|---|-------|---------------------|
-| 1 | Issue creation | Requirements quality cannot be automated |
-| 2 | Plan approval | Catches misunderstood scope before code is written |
-| 3 | CI failure (after retries) | Ambiguous errors require judgment |
-| 4 | PR review + merge | Accountability, security, correctness |
+| #   | Where                      | Why human is needed                                |
+| --- | -------------------------- | -------------------------------------------------- |
+| 1   | Issue creation             | Requirements quality cannot be automated           |
+| 2   | Plan approval              | Catches misunderstood scope before code is written |
+| 3   | CI failure (after retries) | Ambiguous errors require judgment                  |
+| 4   | PR review + merge          | Accountability, security, correctness              |
 
 ---
 
@@ -270,6 +276,7 @@ The most leveraged layer — prevents bad code from being generated in the first
 **`CLAUDE.md`** and **`.cursorrules`** mirror the same rules for developers using Claude Code or Cursor locally. These tools are not part of the automated pipeline but developers are free to use them — these files ensure ad-hoc AI assistance produces code that follows the same architecture regardless of which AI generated it.
 
 **Source of truth hierarchy:**
+
 1. `docs/bsava_architecture_plan.md` — architectural decisions live here
 2. `AGENTS.md` — enforces the plan for all AI agents (Codex and others)
 3. `CLAUDE.md` / `.cursorrules` — mirrors `AGENTS.md` for developer-facing AI tools
@@ -306,6 +313,8 @@ rules: {
   "no-debugger": "error",
 }
 ```
+
+Architectural layer boundaries (app ↔ modules ↔ infrastructure, packages ↔ apps, SDK isolation, caching location) are enforced by scoped `no-restricted-imports` rules in the same config — violations fail `pnpm lint` with a message pointing at the forbidden import. This replaces what was previously done by an LLM verification pass.
 
 TypeScript strict mode in `tsconfig.json`:
 
@@ -355,10 +364,10 @@ Turborepo's task graph means a change to `packages/ui` automatically runs lint, 
 jobs:
   quality:
     steps:
-      - run: pnpm turbo lint              # ESLint across all affected packages
-      - run: pnpm turbo typecheck         # TypeScript across all affected packages
-      - run: pnpm turbo test              # Tests across all affected packages
-      - run: pnpm turbo test --coverage   # Coverage threshold enforced per package
+      - run: pnpm turbo lint # ESLint across all affected packages
+      - run: pnpm turbo typecheck # TypeScript across all affected packages
+      - run: pnpm turbo test # Tests across all affected packages
+      - run: pnpm turbo test --coverage # Coverage threshold enforced per package
 ```
 
 ---
@@ -367,10 +376,10 @@ jobs:
 
 AI-generated code is prone to specific vulnerability classes: injection, insecure defaults, exposed secrets.
 
-| Tool | Purpose |
-|------|---------|
-| **CodeQL** | SAST — free for public repos, GitHub-native |
-| **Semgrep** | OWASP Top 10 + Next.js-specific rule sets |
+| Tool           | Purpose                                             |
+| -------------- | --------------------------------------------------- |
+| **CodeQL**     | SAST — free for public repos, GitHub-native         |
+| **Semgrep**    | OWASP Top 10 + Next.js-specific rule sets           |
 | **secretlint** | Catches accidentally committed secrets and API keys |
 
 `secretlint` runs in lint-staged so secrets are caught before commit.
@@ -396,14 +405,16 @@ Before opening a PR, Codex reviews its own output — checking for unused vars, 
 
 ### Enforcement Stack Summary
 
-| Layer | Tool | Blocks if fails? |
-|-------|------|-----------------|
-| AI instructions | `AGENTS.md` | Prevents bad output |
-| Formatting | Prettier | Pre-commit |
-| Linting | ESLint (strict) | Pre-commit + CI |
-| Type safety | TypeScript strict | Pre-commit + CI |
-| Commit format | commitlint | Pre-commit |
-| Test coverage | Vitest / Jest threshold | CI |
-| Security | CodeQL + Semgrep + secretlint | CI |
-| Merge gate | GitHub branch protection | Blocks PR merge |
-| Human gate | Required PR approval | Blocks PR merge |
+| Layer                    | Tool                               | Blocks if fails?                                                                                                                                         |
+| ------------------------ | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AI instructions          | `AGENTS.md`                        | Prevents bad output                                                                                                                                      |
+| Formatting               | Prettier                           | Pre-commit                                                                                                                                               |
+| Linting                  | ESLint (strict)                    | Pre-commit + CI                                                                                                                                          |
+| Type safety              | TypeScript strict                  | Pre-commit + CI                                                                                                                                          |
+| Commit format            | commitlint                         | Pre-commit                                                                                                                                               |
+| Architectural boundaries | ESLint `no-restricted-imports`     | Pre-commit + CI                                                                                                                                          |
+| Consolidated AI review   | `pnpm ai:verify` (Codex or Claude) | Fixes critical/warning issues across React/Next.js, tests, branch coverage, dead code, business-logic placement, correctness/safety; review posted to PR |
+| Test coverage            | Vitest / Jest threshold            | CI                                                                                                                                                       |
+| Security                 | CodeQL + Semgrep + secretlint      | CI                                                                                                                                                       |
+| Merge gate               | GitHub branch protection           | Blocks PR merge                                                                                                                                          |
+| Human gate               | Required PR approval               | Blocks PR merge                                                                                                                                          |
