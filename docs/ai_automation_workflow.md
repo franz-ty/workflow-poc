@@ -154,16 +154,16 @@ This gate prevents runaway code generation on misunderstood requirements.
 
 ### Phase 3 — Implementation
 
-| Step                     | Who          | What                                                                                                                                                                                                                                         |
-| ------------------------ | ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Branch creation          | Automation   | `git checkout -b feat/linear-<issue-id>-<slug>`                                                                                                                                                                                              |
-| Code generation          | **Codex**    | Implements per the approved plan, runs autonomously in the background                                                                                                                                                                        |
-| Self-check               | **Codex**    | Runs `tsc`, `eslint`, `pnpm test` and fixes errors autonomously (up to 3 retry loops)                                                                                                                                                        |
-| Architectural boundaries | ESLint       | `no-restricted-imports` rules in `eslint.config.mjs` enforce layer boundaries deterministically during `pnpm lint` — no LLM pass needed                                                                                                      |
-| Consolidated AI review   | **AI agent** | Single adversarial pass (`pnpm ai:verify`) covering React/Next.js, test quality, branch coverage, dead code/scope, business-logic placement, and correctness/safety. Fixes critical/warning issues; writes review summary for the PR comment |
-| Commit                   | Automation   | Commits with `[LINEAR-XXX]` in message for traceability                                                                                                                                                                                      |
+| Step                     | Who          | What                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| ------------------------ | ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Branch creation          | Automation   | `git checkout -b feat/linear-<issue-id>-<slug>`                                                                                                                                                                                                                                                                                                                                                                                            |
+| Code generation          | **Codex**    | Implements per the approved plan, runs autonomously in the background                                                                                                                                                                                                                                                                                                                                                                      |
+| Self-check               | **Codex**    | Runs `tsc`, `eslint`, `pnpm test` and fixes errors autonomously (up to 3 retry loops)                                                                                                                                                                                                                                                                                                                                                      |
+| Architectural boundaries | ESLint       | `no-restricted-imports` rules in `eslint.config.mjs` enforce layer boundaries deterministically during `pnpm lint` — no LLM pass needed                                                                                                                                                                                                                                                                                                    |
+| Consolidated AI review   | **AI agent** | Single adversarial pass (`pnpm ai:verify`) covering React/Next.js, test quality, branch coverage, dead code/scope, business-logic placement, and correctness/safety. Runs locally against the working tree; fixes critical/warning issues in-place and writes a summary to `/tmp/ai-review.md`. Not yet wired into `ai-agent-implement.yml` — the CI workflow currently generates its own PR review via a direct GPT-4o call (see Phase 4) |
+| Commit                   | Automation   | Commits with `feat(<IDENTIFIER>):` prefix (conventional commits) for traceability                                                                                                                                                                                                                                                                                                                                                          |
 
-The verification pass is driven by `scripts/runAIVerificationPasses.sh` and is provider-agnostic — set `AI_CLI=codex` (default) or `AI_CLI=claude`. Defaults to a scoped sandbox (`codex --full-auto` / `claude --permission-mode acceptEdits` with a tool allowlist); set `AI_BYPASS=1` for full-bypass mode in ephemeral CI runners. Full prompt and configuration details are in `docs/extreme_quality_enforcement.md`.
+The verification pass is driven by `scripts/runAIVerificationPasses.sh` and is provider-agnostic — set `AI_CLI=codex` (default) or `AI_CLI=claude`. Defaults to a scoped sandbox (`codex --full-auto` / `claude --permission-mode acceptEdits` with a tool allowlist); set `AI_BYPASS=1` for full-bypass mode in ephemeral CI runners.
 
 **Human checkpoint:** If CI fails after 3 auto-fix attempts, the loop halts and pings the engineer in Slack/Linear with the error output. The engineer takes over in their own editor.
 
@@ -314,7 +314,7 @@ rules: {
 }
 ```
 
-Architectural layer boundaries (app ↔ modules ↔ infrastructure, packages ↔ apps, SDK isolation, caching location) are enforced by scoped `no-restricted-imports` rules in the same config — violations fail `pnpm lint` with a message pointing at the forbidden import. This replaces what was previously done by an LLM verification pass.
+Architectural layer boundaries (app ↔ modules ↔ infrastructure, packages ↔ apps, caching location) are enforced by scoped `no-restricted-imports` rules in the same config — violations fail `pnpm lint` with a message pointing at the forbidden import. This replaces what was previously done by an LLM verification pass. The SDK-isolation rule is wired but dormant until the `EXTERNAL_SDKS` array is populated as gateways land.
 
 TypeScript strict mode in `tsconfig.json`:
 
@@ -367,7 +367,6 @@ jobs:
       - run: pnpm turbo lint # ESLint across all affected packages
       - run: pnpm turbo typecheck # TypeScript across all affected packages
       - run: pnpm turbo test # Tests across all affected packages
-      - run: pnpm turbo test --coverage # Coverage threshold enforced per package
 ```
 
 ---
@@ -379,10 +378,9 @@ AI-generated code is prone to specific vulnerability classes: injection, insecur
 | Tool           | Purpose                                             |
 | -------------- | --------------------------------------------------- |
 | **CodeQL**     | SAST — free for public repos, GitHub-native         |
-| **Semgrep**    | OWASP Top 10 + Next.js-specific rule sets           |
 | **secretlint** | Catches accidentally committed secrets and API keys |
 
-`secretlint` runs in lint-staged so secrets are caught before commit.
+`CodeQL` and `secretlint` each run as dedicated CI workflows (`.github/workflows/codeql.yml`, `.github/workflows/secretlint.yml`). `secretlint` is not currently wired into `lint-staged` — the CI workflow is the only gate today.
 
 ---
 
@@ -405,16 +403,15 @@ Before opening a PR, Codex reviews its own output — checking for unused vars, 
 
 ### Enforcement Stack Summary
 
-| Layer                    | Tool                               | Blocks if fails?                                                                                                                                         |
-| ------------------------ | ---------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| AI instructions          | `AGENTS.md`                        | Prevents bad output                                                                                                                                      |
-| Formatting               | Prettier                           | Pre-commit                                                                                                                                               |
-| Linting                  | ESLint (strict)                    | Pre-commit + CI                                                                                                                                          |
-| Type safety              | TypeScript strict                  | Pre-commit + CI                                                                                                                                          |
-| Commit format            | commitlint                         | Pre-commit                                                                                                                                               |
-| Architectural boundaries | ESLint `no-restricted-imports`     | Pre-commit + CI                                                                                                                                          |
-| Consolidated AI review   | `pnpm ai:verify` (Codex or Claude) | Fixes critical/warning issues across React/Next.js, tests, branch coverage, dead code, business-logic placement, correctness/safety; review posted to PR |
-| Test coverage            | Vitest / Jest threshold            | CI                                                                                                                                                       |
-| Security                 | CodeQL + Semgrep + secretlint      | CI                                                                                                                                                       |
-| Merge gate               | GitHub branch protection           | Blocks PR merge                                                                                                                                          |
-| Human gate               | Required PR approval               | Blocks PR merge                                                                                                                                          |
+| Layer                    | Tool                               | Blocks if fails?                                                                                                                                                    |
+| ------------------------ | ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AI instructions          | `AGENTS.md`                        | Prevents bad output                                                                                                                                                 |
+| Formatting               | Prettier                           | Pre-commit                                                                                                                                                          |
+| Linting                  | ESLint (strict)                    | Pre-commit + CI                                                                                                                                                     |
+| Type safety              | TypeScript strict                  | Pre-commit + CI                                                                                                                                                     |
+| Commit format            | commitlint                         | Pre-commit                                                                                                                                                          |
+| Architectural boundaries | ESLint `no-restricted-imports`     | Pre-commit + CI                                                                                                                                                     |
+| Consolidated AI review   | `pnpm ai:verify` (Codex or Claude) | Local only — fixes critical/warning issues across React/Next.js, tests, branch coverage, dead code, business-logic placement, correctness/safety. Not wired into CI |
+| Security                 | CodeQL + secretlint                | CI (separate workflows)                                                                                                                                             |
+| Merge gate               | GitHub branch protection           | Blocks PR merge                                                                                                                                                     |
+| Human gate               | Required PR approval               | Blocks PR merge                                                                                                                                                     |
