@@ -94,7 +94,7 @@ jobs:
             | cut -c1-50)
           BRANCH="feat/${IDENTIFIER,,}-${SLUG}"
 
-          git config user.email "ai-agent@bsava.com"
+          git config user.email "ai-agent@timberyardcommerce.com"
           git config user.name "AI Agent"
           git checkout -b "$BRANCH"
 
