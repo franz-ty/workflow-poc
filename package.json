@@ -9,6 +9,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "turbo lint",
+    "secrets:check": "bash scripts/runSecretlint.sh",
     "typecheck": "turbo typecheck",
     "test": "turbo test",
     "quality": "pnpm lint && pnpm typecheck && pnpm test",
@@ -27,6 +28,7 @@
   "devDependencies": {
     "@commitlint/cli": "^20.5.0",
     "@commitlint/config-conventional": "^20.5.0",
+    "@secretlint/secretlint-rule-preset-recommend": "^12.1.0",
     "@typescript-eslint/eslint-plugin": "^8.58.2",
     "@typescript-eslint/parser": "^8.58.2",
     "eslint": "^9.39.4",
@@ -34,6 +36,7 @@
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
     "prettier": "^3.8.3",
+    "secretlint": "^12.1.0",
     "turbo": "^2.9.6",
     "typescript": "^5"
   }
