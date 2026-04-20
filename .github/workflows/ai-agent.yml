@@ -131,85 +131,12 @@ jobs:
 
           if [ "$HTTP_STATUS" != "200" ]; then
             ERROR_MESSAGE=$(jq -r '.error.message // empty' "$RESPONSE_FILE")
-            ERROR_TYPE=$(jq -r '.error.type // empty' "$RESPONSE_FILE")
-            ERROR_CODE=$(jq -r '.error.code // empty' "$RESPONSE_FILE")
-
-            if [ "$HTTP_STATUS" = "429" ] || printf '%s\n%s\n%s\n' "$ERROR_MESSAGE" "$ERROR_TYPE" "$ERROR_CODE" | grep -Eiq 'rate[ -]?limit|insufficient_quota|exceeded your current quota|quota'; then
-              echo "fallback_to_claude=true" >> $GITHUB_OUTPUT
-              echo "::warning::OpenAI rate limit detected while generating the plan. Falling back to Claude."
-              exit 0
-            fi
-
             echo "::error::OpenAI API error: ${ERROR_MESSAGE:-Unknown OpenAI API error}"
             exit 1
           fi
 
           jq -r '.choices[0].message.content' "$RESPONSE_FILE" > /tmp/plan.md
           echo "Plan generated"
-
-      - name: Validate Claude plan fallback secret
-        if: steps.generate_plan.outputs.fallback_to_claude == 'true'
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          if [ -z "$ANTHROPIC_API_KEY" ]; then
-            echo "::error::ANTHROPIC_API_KEY must be configured when OpenAI rate limits trigger the Claude plan fallback."
-            exit 1
-          fi
-
-      - name: Generate plan with Claude fallback
-        if: steps.generate_plan.outputs.fallback_to_claude == 'true'
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-        run: |
-          IDENTIFIER="${{ steps.inputs.outputs.identifier }}"
-          TITLE=$(cat /tmp/issue_title.txt)
-          DESCRIPTION=$(cat /tmp/issue_description.md)
-          CONTEXT=$(cat /tmp/context.md)
-
-          PROMPT="You are a senior engineer planning the implementation of a Linear issue in this codebase.
-
-          ## Issue: $IDENTIFIER — $TITLE
-
-          $DESCRIPTION
-
-          ## Codebase context
-
-          $CONTEXT
-
-          ## Instructions
-
-          Produce a concise, structured implementation plan in markdown. Include:
-
-          ### Affected files
-          List each file to be created or modified with its full path.
-
-          ### Approach
-          Numbered step-by-step plan. Reference actual file paths and function names where relevant.
-
-          ### Test strategy
-          How the implementation will be verified — commands to run, what passing looks like.
-
-          Do not write any code. Do not make assumptions beyond what is in the issue and codebase context."
-
-          RESPONSE_FILE=/tmp/claude-plan-response.json
-          HTTP_STATUS=$(curl -s -o "$RESPONSE_FILE" -w "%{http_code}" https://api.anthropic.com/v1/messages \
-            -H "x-api-key: $ANTHROPIC_API_KEY" \
-            -H "anthropic-version: 2023-06-01" \
-            -H "Content-Type: application/json" \
-            -d "$(jq -n --arg prompt "$PROMPT" '{
-              model: "claude-sonnet-4-6",
-              max_tokens: 4096,
-              messages: [{"role": "user", "content": $prompt}]
-            }')")
-
-          if [ "$HTTP_STATUS" != "200" ]; then
-            echo "::error::Anthropic API error (HTTP $HTTP_STATUS): $(jq -r '.error.message // empty' "$RESPONSE_FILE")"
-            exit 1
-          fi
-
-          jq -r '.content[0].text' "$RESPONSE_FILE" > /tmp/plan.md
-          echo "Plan generated via Claude fallback"
 
       - name: Post plan to Linear
         env:
