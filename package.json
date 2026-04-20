@@ -9,6 +9,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "turbo lint",
+    "ai:verify": "bash scripts/runAIVerificationPasses.sh",
     "secrets:check": "bash scripts/runSecretlint.sh",
     "typecheck": "turbo typecheck",
     "test": "turbo test",
